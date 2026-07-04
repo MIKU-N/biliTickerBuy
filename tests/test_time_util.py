@@ -42,9 +42,7 @@ def test_compute_ntp_sample_uses_low_delay_median():
         def request(self, server, version, timeout):
             return self.responses[server]
 
-    service = TimeUtil(
-        ntp_servers=("slow.example", "fast-a.example", "fast-b.example")
-    )
+    service = TimeUtil(ntp_servers=("slow.example", "fast-a.example", "fast-b.example"))
     service.client = Client()
 
     sample = service.compute_ntp_sample(attempts_per_server=1)

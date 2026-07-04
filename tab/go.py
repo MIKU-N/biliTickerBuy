@@ -3,7 +3,6 @@ import html
 import json
 import os
 import threading
-import time
 import uuid
 
 import gradio as gr
