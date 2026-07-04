@@ -33,6 +33,8 @@ ticket_str_list: List[str] = []
 sales_dates: list[str] = []
 project_id = 0
 is_hot_project = False
+ticket_context_account_uid: str | None = None
+ticket_context_invalidated = False
 
 
 def _format_account_choice(uid: str, name: str, level: int) -> str:
@@ -218,6 +220,41 @@ def _has_invalid_index(indices: list[int], values: list[Any]) -> bool:
     )
 
 
+def _get_active_account_uid() -> str | None:
+    try:
+        cookie_manager = util.main_request.cookieManager
+        if not cookie_manager.have_cookies():
+            return None
+        uid = cookie_manager.get_cookies_value("DedeUserID")
+    except Exception:
+        return None
+    return str(uid) if uid else None
+
+
+def _reset_ticket_context(*, invalidated: bool = False) -> None:
+    global buyer_value
+    global addr_value
+    global ticket_value
+    global project_name
+    global ticket_str_list
+    global sales_dates
+    global project_id
+    global is_hot_project
+    global ticket_context_account_uid
+    global ticket_context_invalidated
+
+    buyer_value = []
+    addr_value = []
+    ticket_value = []
+    project_name = ""
+    ticket_str_list = []
+    sales_dates = []
+    project_id = 0
+    is_hot_project = False
+    ticket_context_account_uid = None
+    ticket_context_invalidated = invalidated
+
+
 def _format_ticket_option(screen_name: str, ticket: dict, ticket_price: int) -> str:
     ticket_desc = ticket.get("desc", "")
     sale_start = str(ticket.get("sale_start", "未知"))
@@ -269,6 +306,7 @@ def on_submit_ticket_id(num):
     global sales_dates
     global project_id
     global is_hot_project
+    global ticket_context_account_uid
 
     def _raise_login_error(exc: Exception) -> None:
         message = str(exc).strip()
@@ -278,9 +316,7 @@ def on_submit_ticket_id(num):
             ) from exc
 
     try:
-        buyer_value = []
-        addr_value = []
-        ticket_value = []
+        _reset_ticket_context()
         _, num, extracted_id_message = _resolve_project_input(num)
 
         try:
@@ -369,6 +405,7 @@ def on_submit_ticket_id(num):
             raise
 
         buyer_value = buyer_json["data"]["list"]
+        ticket_context_account_uid = _get_active_account_uid()
         buyer_str_list = [
             f"{item['name']}-{item['personal_id']}" for item in buyer_value
         ]
@@ -433,6 +470,13 @@ def on_submit_all(
     address_index,
 ):
     try:
+        if ticket_context_invalidated:
+            raise gr.Error("当前账号已切换，请重新获取票务信息后再生成配置。")
+        if (
+            ticket_context_account_uid is not None
+            and ticket_context_account_uid != _get_active_account_uid()
+        ):
+            raise gr.Error("当前账号已切换，请重新获取票务信息后再生成配置。")
         if ticket_id is None:
             raise gr.Error("请输入正确的活动链接。")
         if not isinstance(people_indices, list) or len(people_indices) == 0:
@@ -532,6 +576,7 @@ def upload_file(filepath):
         account = util.main_request.cookieManager.add_account(cookies)
         set_main_request(BiliRequest(cookies_config_path=GLOBAL_COOKIE_PATH))
         util.main_request.cookieManager.db.insert("cookie", account.cookies)
+        _reset_ticket_context(invalidated=True)
         gr.Info(f"已导入账号 {account.name}", duration=5)
 
         new_choices = [
@@ -657,6 +702,7 @@ def login_tab():
         def _activate_account(account) -> None:
             set_main_request(BiliRequest(cookies_config_path=GLOBAL_COOKIE_PATH))
             util.main_request.cookieManager.db.insert("cookie", account.cookies)
+            _reset_ticket_context(invalidated=True)
             name = util.main_request.get_request_name()
             if name == "未登录":
                 gr.Warning(
@@ -810,6 +856,7 @@ def login_tab():
             if was_active:
                 set_main_request(BiliRequest(cookies_config_path=GLOBAL_COOKIE_PATH))
                 util.main_request.cookieManager.db.delete("cookie")
+                _reset_ticket_context(invalidated=True)
                 gr.Info(
                     f"已删除最后一个账号 {account.name if account else uid}，当前无活跃账号",
                     duration=5,
