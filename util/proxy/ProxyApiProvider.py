@@ -18,6 +18,26 @@ class ProxyApiResult:
     response: dict[str, Any]
 
 
+PROXY_LIST_KEYS = ("proxy_list", "list", "proxies", "items")
+PROXY_USERNAME_KEYS = (
+    "username",
+    "user",
+    "account",
+    "authkey",
+    "auth_key",
+    "http_user",
+)
+PROXY_PASSWORD_KEYS = (
+    "password",
+    "pass",
+    "pwd",
+    "authpwd",
+    "auth_pwd",
+    "http_pass",
+)
+PROXY_SCHEME_KEYS = ("protocol", "scheme", "type")
+
+
 def normalize_proxy_api_protocol(protocol: str | None) -> str:
     text = str(protocol or "http").strip().lower()
     if text in {"socks", "socks5"}:
@@ -32,23 +52,69 @@ def build_proxy_api_url(api_url: str) -> str:
     return target
 
 
+def _get_any_key(item: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in item:
+            return item[key]
+    lower_item = {str(key).lower(): value for key, value in item.items()}
+    for key in keys:
+        value = lower_item.get(key.lower())
+        if value is not None:
+            return value
+    return None
+
+
+def _proxy_item_defaults(container: dict[str, Any]) -> dict[str, Any]:
+    defaults: dict[str, Any] = {}
+    username = _get_any_key(container, *PROXY_USERNAME_KEYS)
+    password = _get_any_key(container, *PROXY_PASSWORD_KEYS)
+    scheme = _get_any_key(container, *PROXY_SCHEME_KEYS)
+    if username not in (None, ""):
+        defaults["username"] = username
+    if password not in (None, ""):
+        defaults["password"] = password
+    if scheme not in (None, ""):
+        defaults["protocol"] = scheme
+    return defaults
+
+
+def _with_proxy_item_defaults(
+    items: list[Any], container: dict[str, Any]
+) -> list[Any]:
+    defaults = _proxy_item_defaults(container)
+    if not defaults:
+        return items
+
+    merged_items: list[Any] = []
+    for item in items:
+        if isinstance(item, dict):
+            merged = dict(defaults)
+            merged.update(item)
+            merged_items.append(merged)
+        else:
+            merged = dict(defaults)
+            merged["proxy"] = item
+            merged_items.append(merged)
+    return merged_items
+
+
 def _iter_proxy_items(payload: Any) -> list[Any]:
     if isinstance(payload, dict):
         data = payload.get("data")
         if isinstance(data, dict):
-            for key in ("proxy_list", "list", "proxies", "items"):
+            for key in PROXY_LIST_KEYS:
                 value = data.get(key)
                 if isinstance(value, list):
-                    return value
+                    return _with_proxy_item_defaults(value, data)
             if any(key in data for key in ("ip", "host", "port", "proxy")):
                 return [data]
         elif isinstance(data, list):
-            return data
+            return _with_proxy_item_defaults(data, payload)
 
-        for key in ("proxy_list", "list", "proxies", "items"):
+        for key in PROXY_LIST_KEYS:
             value = payload.get(key)
             if isinstance(value, list):
-                return value
+                return _with_proxy_item_defaults(value, payload)
     if isinstance(payload, list):
         return payload
     return []
@@ -87,18 +153,6 @@ def _format_proxy_url(
     return f"{scheme}://{host}:{port}"
 
 
-def _get_any_key(item: dict[str, Any], *keys: str) -> Any:
-    for key in keys:
-        if key in item:
-            return item[key]
-    lower_item = {str(key).lower(): value for key, value in item.items()}
-    for key in keys:
-        value = lower_item.get(key.lower())
-        if value is not None:
-            return value
-    return None
-
-
 def _extract_proxy_parts(
     item: Any,
     *,
@@ -114,11 +168,11 @@ def _extract_proxy_parts(
             if username:
                 return proxy_parts
             username = (
-                _get_any_key(item, "username", "user", "account", "authkey") or ""
+                _get_any_key(item, *PROXY_USERNAME_KEYS) or ""
             )
-            password = _get_any_key(item, "password", "pass", "pwd", "authpwd") or ""
+            password = _get_any_key(item, *PROXY_PASSWORD_KEYS) or ""
             scheme = _normalize_proxy_scheme(
-                _get_any_key(item, "protocol", "scheme", "type") or scheme,
+                _get_any_key(item, *PROXY_SCHEME_KEYS) or scheme,
                 protocol,
             )
             return (
@@ -133,11 +187,11 @@ def _extract_proxy_parts(
         port = _get_any_key(item, "port")
         if host and port:
             username = (
-                _get_any_key(item, "username", "user", "account", "authkey") or ""
+                _get_any_key(item, *PROXY_USERNAME_KEYS) or ""
             )
-            password = _get_any_key(item, "password", "pass", "pwd", "authpwd") or ""
+            password = _get_any_key(item, *PROXY_PASSWORD_KEYS) or ""
             scheme = _normalize_proxy_scheme(
-                _get_any_key(item, "protocol", "scheme", "type"),
+                _get_any_key(item, *PROXY_SCHEME_KEYS),
                 protocol,
             )
             return (

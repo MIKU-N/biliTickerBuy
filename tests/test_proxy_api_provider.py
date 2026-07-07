@@ -142,6 +142,31 @@ def test_parse_proxy_api_keeps_auth_from_object_fields():
     ]
 
 
+def test_parse_proxy_api_keeps_auth_from_http_user_and_http_pass_fields():
+    payload = {
+        "code": 0,
+        "msg": "OK",
+        "data": {
+            "count": 1,
+            "filter_count": 0,
+            "surplus_quantity": 0,
+            "proxy_list": [
+                {
+                    "expire_time": "2026-07-08 00:59:33",
+                    "http_pass": "proxy_pass",
+                    "http_user": "proxy_user",
+                    "ip": "192.0.2.60",
+                    "port": 35772,
+                }
+            ],
+        },
+    }
+
+    assert parse_proxy_api_response(payload, protocol="http") == [
+        _proxy_url("http", "proxy_user", "proxy_pass", "192.0.2.60", 35772)
+    ]
+
+
 def test_parse_proxy_api_merges_auth_fields_with_proxy_field():
     payload = {
         "code": 0,
@@ -157,6 +182,21 @@ def test_parse_proxy_api_merges_auth_fields_with_proxy_field():
 
     assert parse_proxy_api_response(payload, protocol="http") == [
         _proxy_url("http", "proxy_user", "proxy_pass", "192.0.2.40", 15115)
+    ]
+
+
+def test_parse_proxy_api_merges_data_level_auth_fields_with_proxy_list():
+    payload = {
+        "code": 0,
+        "data": {
+            "proxy_list": ["192.0.2.50:15115"],
+            "Username": "proxy_user",
+            "Password": "proxy_pass",
+        },
+    }
+
+    assert parse_proxy_api_response(payload, protocol="http") == [
+        _proxy_url("http", "proxy_user", "proxy_pass", "192.0.2.50", 15115)
     ]
 
 
