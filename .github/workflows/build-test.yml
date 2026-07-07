@@ -1,0 +1,215 @@
+name: Build Test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python-checks:
+    name: Python Checks
+    runs-on: ubuntu-latest
+
+    env:
+      BTB_SKIP_INITIAL_TIME_SYNC: "1"
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Compile Python sources
+        run: |
+          uv run python -m compileall \
+            app_cmd \
+            interface \
+            tab \
+            task \
+            tests \
+            util \
+            main.py \
+            app_update.py \
+            app_version.py
+
+      - name: Run tests
+        run: uv run pytest tests -q
+
+      - name: Build package
+        run: uv build
+
+  package-application:
+    name: Package ${{ matrix.config.os.filename }}
+    needs: python-checks
+    if: github.event_name != 'pull_request'
+    runs-on: ${{ matrix.config.os.name }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - os:
+              name: ubuntu-22.04
+              filename: linux_amd64
+          - os:
+              name: ubuntu-22.04-arm
+              filename: linux_arm64
+          - os:
+              name: macos-14
+              filename: macos_arm64
+          - os:
+              name: macos-15-intel
+              filename: macos_intel
+          - os:
+              name: windows-latest
+              filename: windows_amd64
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install packaging dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install pyinstaller~=6.20.0
+          pip install -r requirements.txt
+
+      - name: Build PyInstaller
+        shell: bash
+        run: pyinstaller main.spec
+
+      - name: Stage updater scripts
+        shell: bash
+        run: |
+          RELEASE_DIR="release/biliTickerBuy"
+          mkdir -p "$RELEASE_DIR"
+
+          if [ "${{ matrix.config.os.filename }}" = "windows_amd64" ]; then
+            cp dist/biliTickerBuy.exe "$RELEASE_DIR/biliTickerBuy.exe"
+            cp assets/updater/update.bat "$RELEASE_DIR/update.bat"
+          elif [[ "${{ matrix.config.os.filename }}" == macos_* ]]; then
+            mv dist/biliTickerBuy.app "$RELEASE_DIR/biliTickerBuy.app"
+            cp assets/updater/update.sh "$RELEASE_DIR/update.sh"
+            chmod +x "$RELEASE_DIR/update.sh"
+          else
+            cp dist/biliTickerBuy "$RELEASE_DIR/biliTickerBuy"
+            cp assets/updater/update.sh "$RELEASE_DIR/update.sh"
+            chmod +x "$RELEASE_DIR/biliTickerBuy"
+            chmod +x "$RELEASE_DIR/update.sh"
+          fi
+
+          cp assets/updater/.env.install "$RELEASE_DIR/.env.install"
+
+      - name: Zip Windows build
+        if: matrix.config.os.filename == 'windows_amd64'
+        shell: pwsh
+        run: |
+          $releaseDir = "./release/biliTickerBuy"
+          Compress-Archive `
+            -Path "$releaseDir/biliTickerBuy.exe",
+                  "$releaseDir/update.bat",
+                  "$releaseDir/.env.install" `
+            -DestinationPath "./tmp.zip" `
+            -Force
+
+      - name: Zip Linux build
+        if: matrix.config.os.filename != 'windows_amd64' && !startsWith(matrix.config.os.filename, 'macos_')
+        shell: bash
+        run: |
+          cd ./dist
+          zip -r ../tmp.zip biliTickerBuy
+
+      - name: Zip macOS CLI build
+        if: startsWith(matrix.config.os.filename, 'macos_')
+        shell: bash
+        run: |
+          cd ./dist
+          zip -r ../tmp-macos-cli.zip biliTickerBuy
+
+      - name: Build macOS DMG
+        if: startsWith(matrix.config.os.filename, 'macos_')
+        shell: bash
+        run: |
+          APP_DIR="./release/biliTickerBuy"
+
+          echo "Disk usage before macOS DMG cleanup:"
+          df -h .
+          df -h /tmp || true
+          du -sh ./build ./dist ./release 2>/dev/null || true
+
+          rm -rf ./dist ./build
+
+          echo "Disk usage after macOS DMG cleanup:"
+          df -h .
+          df -h /tmp || true
+          du -sh ./release 2>/dev/null || true
+
+          SOURCE_KB="$(du -sk "$APP_DIR" | awk '{print $1}')"
+          DMG_SIZE_MB="$(( (SOURCE_KB * 2 + 1024 * 200 + 1023) / 1024 ))"
+
+          hdiutil create \
+            -volname "biliTickerBuy" \
+            -srcfolder "$APP_DIR" \
+            -ov \
+            -fs HFS+ \
+            -format UDRW \
+            -size "${DMG_SIZE_MB}m" \
+            "./tmp-rw.dmg"
+
+          hdiutil convert "./tmp-rw.dmg" \
+            -ov \
+            -format UDZO \
+            -o "./tmp.dmg"
+
+          rm -f ./tmp-rw.dmg
+
+      - name: Prepare CI artifacts
+        shell: bash
+        env:
+          PLATFORM_KEY: ${{ matrix.config.os.filename }}
+        run: |
+          mkdir -p artifacts
+          if [[ "${PLATFORM_KEY}" == macos_* ]]; then
+            mv tmp.dmg "artifacts/biliTickerBuy-${PLATFORM_KEY}.dmg"
+            mv tmp-macos-cli.zip "artifacts/biliTickerBuy-${PLATFORM_KEY}-cli.zip"
+          else
+            mv tmp.zip "artifacts/biliTickerBuy-${PLATFORM_KEY}.zip"
+          fi
+
+      - name: Upload packaged artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: biliTickerBuy-${{ matrix.config.os.filename }}
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 14

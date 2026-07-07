@@ -259,24 +259,8 @@ def buy_stream(config: BuyConfig):
             if not str(config.proxy_api_url or "").strip():
                 return False, None
             try:
-                request_count = int(config.proxy_api_request_count or 0)
-            except (TypeError, ValueError):
-                request_count = 0
-            if request_count <= 0:
-                request_count = max(
-                    1,
-                    len(
-                        [
-                            proxy
-                            for proxy in _request.proxy_manager.proxy_list
-                            if proxy.lower() != "none"
-                        ]
-                    ),
-                )
-            try:
                 result = fetch_proxy_api(
                     config.proxy_api_url,
-                    count=request_count,
                     protocol=config.proxy_api_protocol,
                 )
                 _request.replace_proxy_pool(",".join(result.proxies))

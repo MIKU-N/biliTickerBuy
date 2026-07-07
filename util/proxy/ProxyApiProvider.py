@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import parse_qsl, quote, unquote, urlencode, urlsplit, urlunsplit
+from urllib.parse import quote, unquote, urlsplit
 
 import requests
 
@@ -25,25 +25,11 @@ def normalize_proxy_api_protocol(protocol: str | None) -> str:
     return "http"
 
 
-def build_proxy_api_url(api_url: str, *, count: int, protocol: str) -> str:
+def build_proxy_api_url(api_url: str) -> str:
     target = str(api_url or "").strip()
     if not target:
         raise ProxyApiError("请先填写代理 API 地址")
-
-    parts = urlsplit(target)
-    query = dict(parse_qsl(parts.query, keep_blank_values=True))
-    query["count"] = str(max(1, int(count)))
-    query["format"] = "json"
-    query["protocol"] = normalize_proxy_api_protocol(protocol)
-    return urlunsplit(
-        (
-            parts.scheme,
-            parts.netloc,
-            parts.path,
-            urlencode(query, doseq=True),
-            parts.fragment,
-        )
-    )
+    return target
 
 
 def _iter_proxy_items(payload: Any) -> list[Any]:
@@ -248,16 +234,18 @@ def parse_proxy_api_response(payload: dict[str, Any], *, protocol: str) -> list[
 def fetch_proxy_api(
     api_url: str,
     *,
-    count: int,
     protocol: str,
     timeout: int = 15,
 ) -> ProxyApiResult:
-    request_url = build_proxy_api_url(api_url, count=count, protocol=protocol)
+    request_url = build_proxy_api_url(api_url)
     response = requests.request(
         "GET", request_url, headers={}, data={}, timeout=timeout
     )
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise ProxyApiError("代理 API 未返回合法 JSON") from exc
     response.raise_for_status()
-    payload = response.json()
     if not isinstance(payload, dict):
         raise ProxyApiError("代理 API 未返回 JSON 对象")
     return ProxyApiResult(

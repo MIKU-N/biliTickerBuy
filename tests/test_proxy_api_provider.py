@@ -3,6 +3,7 @@ import pytest
 from util.proxy.ProxyApiProvider import (
     ProxyApiError,
     build_proxy_api_url,
+    fetch_proxy_api,
     parse_proxy_api_response,
 )
 
@@ -11,16 +12,53 @@ def _proxy_url(scheme: str, username: str, password: str, host: str, port: int) 
     return f"{scheme}://" + f"{username}:{password}@" + f"{host}:{port}"
 
 
-def test_build_proxy_api_url_overrides_required_params():
+def test_build_proxy_api_url_keeps_original_query_params():
     url = build_proxy_api_url(
-        "http://api.example.com/get?app_key=abc&count=&format=text&protocol=http",
-        count=3,
-        protocol="socks5",
+        "  http://api.example.com/get?app_key=abc&count=&format=text&protocol=1  ",
     )
 
-    assert url == (
-        "http://api.example.com/get?app_key=abc&count=3&format=json&protocol=socks5"
-    )
+    assert url == "http://api.example.com/get?app_key=abc&count=&format=text&protocol=1"
+
+
+def test_fetch_proxy_api_rejects_invalid_json_response(monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            raise ValueError("Expecting value")
+
+    def fake_request(method, url, headers, data, timeout):
+        assert url == "http://api.example.com/get?count=1&format=json&protocol=1"
+        return FakeResponse()
+
+    monkeypatch.setattr("util.proxy.ProxyApiProvider.requests.request", fake_request)
+
+    with pytest.raises(ProxyApiError, match="代理 API 未返回合法 JSON"):
+        fetch_proxy_api(
+            "http://api.example.com/get?count=1&format=json&protocol=1",
+            protocol="socks5",
+        )
+
+
+def test_fetch_proxy_api_rejects_invalid_json_before_http_status(monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            raise RuntimeError("HTTP 500")
+
+        def json(self):
+            raise ValueError("Expecting value")
+
+    def fake_request(method, url, headers, data, timeout):
+        return FakeResponse()
+
+    monkeypatch.setattr("util.proxy.ProxyApiProvider.requests.request", fake_request)
+
+    with pytest.raises(ProxyApiError, match="代理 API 未返回合法 JSON"):
+        fetch_proxy_api(
+            "http://api.example.com/get?count=1&format=json&protocol=1",
+            protocol="http",
+        )
 
 
 def test_parse_youdaili_success_response_as_http_proxy():

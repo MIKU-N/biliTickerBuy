@@ -68,7 +68,7 @@ class BuyConfig(BasicConfig):
         db="proxyApiUrl",
         cli="--proxy-api-url",
     )
-    """Proxy provider API URL used to replenish the proxy pool."""
+    """Complete proxy provider API URL used to replenish the proxy pool."""
 
     proxy_api_protocol: str = config_field(
         "http",
@@ -77,7 +77,7 @@ class BuyConfig(BasicConfig):
         db="proxyApiProtocol",
         cli="--proxy-api-protocol",
     )
-    """Proxy provider protocol parameter: http or socks5."""
+    """Fallback proxy URL scheme for API responses without a scheme: http or socks5."""
 
     proxy_api_request_count: int = config_field(
         0,
@@ -87,7 +87,7 @@ class BuyConfig(BasicConfig):
         cli="--proxy-api-request-count",
         cast=int,
     )
-    """Number of proxies requested from the API; 0 follows the current pool size."""
+    """Deprecated compatibility field; proxy API count is controlled by the URL."""
 
     # ConfigDB 里原字段是 hideRandomMessage，语义和 show_random_message 相反
     show_random_message: bool = config_field(
