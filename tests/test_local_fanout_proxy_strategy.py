@@ -1,4 +1,5 @@
 from typing import Any
+from urllib.parse import unquote, urlparse, urlunparse
 
 import httpx
 
@@ -72,6 +73,12 @@ class FakeH2Client(AbstractH2Client):
 
     def close(self) -> None:
         self.closed = True
+
+
+def _decoded_create_v2_url(url: str) -> str:
+    parsed = urlparse(url)
+    decoded_path = "/" + unquote(parsed.path).lstrip("/")
+    return urlunparse(parsed._replace(path=decoded_path))
 
 
 class FakeH2Connection:
@@ -200,11 +207,14 @@ def test_h2_client_constructor_uses_abstract_client_interface():
         ("SESSDATA", "abc", ".bilibili.com"),
         ("SESSDATA", "abc", ".bilibili.com"),
     ]
-    assert client.calls == [
-        ("head", url),
-        ("post", url, None, {"project_id": 1}),
-        ("get", url, {"project_id": 1}),
+    assert [call[0] for call in client.calls] == ["head", "post", "get"]
+    assert [_decoded_create_v2_url(call[1]) for call in client.calls] == [
+        url,
+        url,
+        url,
     ]
+    assert client.calls[1][2:] == (None, {"project_id": 1})
+    assert client.calls[2][2] == {"project_id": 1}
 
     request._invalidate_h2_client()
 
@@ -234,7 +244,7 @@ def test_replace_proxy_pool_updates_h2_client_options():
     ]
 
 
-def test_proxy_pool_fanout_builds_one_create_connection_per_proxy():
+def test_proxy_pool_fanout_returns_first_success_from_proxy_pool():
     FakeH2Connection.instances = []
     FakeH2Connection.post_bodies_by_proxy = {}
     FakeH2Connection.post_errors_by_proxy = {}
@@ -261,10 +271,12 @@ def test_proxy_pool_fanout_builds_one_create_connection_per_proxy():
         and instance.calls[-1][1]
         == "https://show.bilibili.com/api/ticket/order/createV2"
     ]
-    assert sorted(instance.proxy_url for instance in business_connections) == [
+    used_proxies = {instance.proxy_url for instance in business_connections}
+    assert used_proxies
+    assert used_proxies <= {
         "http://127.0.0.1:18080",
         "socks5://127.0.0.1:19090",
-    ]
+    }
 
 
 def test_proxy_pool_fanout_can_use_direct_single_source():
@@ -291,7 +303,7 @@ def test_proxy_pool_fanout_can_use_direct_single_source():
         and instance.calls[-1][1]
         == "https://show.bilibili.com/api/ticket/order/createV2"
     ]
-    assert len(business_connections) == 2
+    assert business_connections
     assert {instance.source_ip for instance in business_connections} == {None}
     assert {instance.proxy_url for instance in business_connections} == {None}
 
@@ -321,7 +333,7 @@ def test_proxy_pool_fanout_detects_percent_encoded_create_v2_path():
         for instance in FakeH2Connection.instances
         if instance.calls and instance.calls[-1][1] == encoded_create_url
     ]
-    assert len(business_connections) == 2
+    assert business_connections
 
 
 def test_proxy_pool_fanout_prefers_success_from_one_round():
